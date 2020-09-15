@@ -51,18 +51,18 @@ export async function settleFunds({
   openOrders,
   connection,
   wallet,
-  baseCurrencyAccount,
-  quoteCurrencyAccount,
+  baseCurrencyPubkey,
+  quoteCurrencyPubkey,
 }) {
   if (
     !market ||
     !wallet ||
     !connection ||
     !openOrders ||
-    !baseCurrencyAccount ||
-    !quoteCurrencyAccount
+    !baseCurrencyPubkey ||
+    !quoteCurrencyPubkey
   ) {
-    if (baseCurrencyAccount && !quoteCurrencyAccount) {
+    if (baseCurrencyPubkey && !quoteCurrencyPubkey) {
       return await createTokenAccount({
         connection,
         wallet,
@@ -74,12 +74,12 @@ export async function settleFunds({
               openOrders,
               connection,
               wallet,
-              baseCurrencyAccount,
-              quoteCurrencyAccount: { pubkey: newAccountPubkey },
+              baseCurrencyPubkey,
+              quoteCurrencyPubkey: newAccountPubkey,
             });
         },
       });
-    } else if (quoteCurrencyAccount && !baseCurrencyAccount) {
+    } else if (quoteCurrencyPubkey && !baseCurrencyPubkey) {
       return await createTokenAccount({
         connection,
         wallet,
@@ -91,8 +91,8 @@ export async function settleFunds({
               openOrders,
               connection,
               wallet,
-              baseCurrencyAccount: { pubkey: newAccountPubkey },
-              quoteCurrencyAccount,
+              baseCurrencyPubkey: newAccountPubkey,
+              quoteCurrencyPubkey,
             });
         },
       });
@@ -105,8 +105,8 @@ export async function settleFunds({
   const { transaction, signers } = await market.makeSettleFundsTransaction(
     connection,
     openOrders,
-    baseCurrencyAccount.pubkey,
-    quoteCurrencyAccount.pubkey,
+    baseCurrencyPubkey,
+    quoteCurrencyPubkey,
   );
 
   const onConfirm = (result) => {
