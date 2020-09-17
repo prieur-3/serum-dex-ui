@@ -1,13 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Col, Input, Row, Select } from 'antd';
+import { Col, Popover, Row, Select, Typography } from 'antd';
 import styled from 'styled-components';
 import Orderbook from '../components/Orderbook';
 import UserInfoTable from '../components/UserInfoTable';
 import StandaloneBalancesDisplay from '../components/StandaloneBalancesDisplay';
-import { useMarket, useMarketsList } from '../utils/markets';
+import {
+  useMarket,
+  useMarketsList,
+  useUnmigratedDeprecatedMarketsList,
+} from '../utils/markets';
 import TradeForm from '../components/TradeForm';
-import { useLocalStorageState } from '../utils/utils';
 import TradesTable from '../components/TradesTable';
+import LinkAddress from '../components/LinkAddress';
+import DeprecatedMarketInstructions from '../components/DeprecatedMarketInstructions';
+import { InfoCircleOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
 
@@ -21,28 +27,18 @@ const Wrapper = styled.div`
   }
 `;
 
-function hashString(s) {
-  var h = 0,
-    l = s.length,
-    i = 0;
-  if (l > 0) while (i < l) h = ((h << 5) - h + s.charCodeAt(i++)) | 0;
-  return h;
-}
-
-const requirePassword = false;
-
 export default function TradePage() {
-  const { marketName, setMarketName } = useMarket();
+  const { marketName, market, deprecated } = useMarket();
   const markets = useMarketsList();
-  const [submittedPassword, setSubmittedPassword] = useLocalStorageState(
-    'submittedPassword5',
-    false,
-  );
-  const [password, setPassword] = useState('password');
+  const deprecatedMarkets = useUnmigratedDeprecatedMarketsList();
   const [dimensions, setDimensions] = useState({
     height: window.innerHeight,
     width: window.innerWidth,
   });
+
+  useEffect(() => {
+    document.title = `${marketName} — Serum`;
+  }, [marketName]);
 
   const changeOrderRef = useRef();
 
@@ -67,56 +63,56 @@ export default function TradePage() {
       changeOrderRef.current && changeOrderRef.current({ size }),
   };
   const getComponent = useCallback(() => {
-    if (width < 1000) {
+    if (deprecated) {
+      return <RenderDeprecatedMarket />;
+    } else if (width < 1000) {
       return <RenderSmaller {...componentProps} />;
     } else if (width < 1450) {
       return <RenderSmall {...componentProps} />;
     } else {
       return <RenderNormal {...componentProps} />;
     }
-  }, [width, componentProps]);
-
-  if (!submittedPassword && requirePassword) {
-    return (
-      <Wrapper style={{ width: 400 }}>
-        <Input.Password
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <Button
-          onClick={() => {
-            if (hashString(password) === 99071593) {
-              setSubmittedPassword(true);
-            }
-          }}
-          block
-          type="primary"
-          size="large"
-        >
-          Submit
-        </Button>
-      </Wrapper>
-    );
-  }
+  }, [width, componentProps, deprecated]);
 
   return (
     <>
       <Wrapper>
-        <Row>
+        <Row
+          align="middle"
+          style={{ paddingLeft: 5, paddingRight: 5 }}
+          gutter={16}
+        >
           <Col>
-            <Select
-              bordered={false}
-              onSelect={setMarketName}
-              value={marketName}
-            >
-              {markets.map(({ name, address }) => (
-                <Option value={name} key={address}>
-                  {name}
-                </Option>
-              ))}
-            </Select>
+            <MarketSelector markets={markets} placeholder={'Select market'} />
           </Col>
+          {market ? (
+            <Col>
+              <Popover
+                content={<LinkAddress address={market.publicKey.toBase58()} />}
+                placement="bottomRight"
+                title="Market address"
+                trigger="click"
+              >
+                <InfoCircleOutlined style={{ color: '#2abdd2' }} />
+              </Popover>
+            </Col>
+          ) : null}
+          {deprecatedMarkets && deprecatedMarkets.length > 0 && (
+            <React.Fragment>
+              <Col>
+                <Typography>
+                  You have unsettled funds on deprecated markets! Please go
+                  through them to claim your funds.
+                </Typography>
+              </Col>
+              <Col>
+                <MarketSelector
+                  markets={deprecatedMarkets}
+                  placeholder={'Select deprecated market'}
+                />
+              </Col>
+            </React.Fragment>
+          )}
         </Row>
         {getComponent()}
       </Wrapper>
@@ -124,11 +120,82 @@ export default function TradePage() {
   );
 }
 
+function MarketSelector({ markets, placeholder }) {
+  const { market, setMarketAddress } = useMarket();
+
+  const extractBase = (a) => a.split('/')[0];
+  const extractQuote = (a) => a.split('/')[1];
+
+  return (
+    <Select
+      showSearch
+      size={'large'}
+      style={{ width: 200 }}
+      placeholder={placeholder || 'Select a market'}
+      optionFilterProp="name"
+      onSelect={setMarketAddress}
+      listHeight={400}
+      value={markets
+        .find(
+          (proposedMarket) =>
+            market?.address && proposedMarket.address.equals(market.address),
+        )
+        ?.address?.toBase58()}
+      filterOption={(input, option) =>
+        option.name.toLowerCase().indexOf(input.toLowerCase()) >= 0
+      }
+    >
+      {markets
+        .sort((a, b) =>
+          extractQuote(a.name) === 'USDT' && extractQuote(b.name) !== 'USDT'
+            ? -1
+            : extractQuote(a.name) !== 'USDT' && extractQuote(b.name) === 'USDT'
+            ? 1
+            : 0,
+        )
+        .sort((a, b) =>
+          extractBase(a.name) < extractBase(b.name)
+            ? -1
+            : extractBase(a.name) > extractBase(b.name)
+            ? 1
+            : 0,
+        )
+        .map(({ address, name, deprecated }, i) => (
+          <Option
+            value={address.toBase58()}
+            key={address}
+            name={name}
+            style={{
+              padding: '10px 0',
+              textAlign: 'center',
+              backgroundColor: i % 2 === 0 ? 'rgb(39, 44, 61)' : null,
+            }}
+          >
+            {name} {deprecated ? ' (Deprecated)' : null}
+          </Option>
+        ))}
+    </Select>
+  );
+}
+
+const RenderDeprecatedMarket = () => {
+  return (
+    <>
+      <Row>
+        <Col flex="auto">
+          <DeprecatedMarketInstructions />
+        </Col>
+      </Row>
+    </>
+  );
+};
+
 const RenderNormal = ({ onChangeOrderRef, onPrice, onSize }) => {
   return (
     <Row
       style={{
         minHeight: '750px',
+        flexWrap: 'nowrap',
       }}
     >
       <Col flex="auto" style={{ height: '100%', display: 'flex' }}>
@@ -189,18 +256,18 @@ const RenderSmaller = ({ onChangeOrderRef, onPrice, onSize }) => {
   return (
     <>
       <Row>
-        <Col span={12} style={{ height: '100%', display: 'flex' }}>
+        <Col xs={24} sm={12} style={{ height: '100%', display: 'flex' }}>
           <TradeForm style={{ flex: 1 }} setChangeOrderRef={onChangeOrderRef} />
         </Col>
-        <Col span={12}>
+        <Col xs={24} sm={12}>
           <StandaloneBalancesDisplay />
         </Col>
       </Row>
       <Row style={{ minHeight: '500px' }}>
-        <Col span={12} style={{ height: '100%', display: 'flex' }}>
+        <Col xs={24} sm={12} style={{ height: '100%', display: 'flex' }}>
           <Orderbook smallScreen={true} onPrice={onPrice} onSize={onSize} />
         </Col>
-        <Col span={12} style={{ height: '100%', display: 'flex' }}>
+        <Col xs={24} sm={12} style={{ height: '100%', display: 'flex' }}>
           <TradesTable smallScreen={true} />
         </Col>
       </Row>

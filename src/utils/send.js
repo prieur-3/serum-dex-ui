@@ -1,45 +1,122 @@
 import { notify } from './notifications';
-import nacl from 'tweetnacl';
-import { sleep, getDecimalCount } from './utils';
-import { Transaction } from '@solana/web3.js';
+import { getDecimalCount, sleep } from './utils';
+import { TokenInstructions } from '@project-serum/serum';
+
+export async function createTokenAccount({
+  connection,
+  wallet,
+  mintPublicKey,
+  onConfirmCallBack,
+}) {
+  const {
+    transaction,
+    newAccountPubkey,
+    signers,
+  } = await TokenInstructions.createTokenAccountTransaction(
+    connection,
+    wallet,
+    mintPublicKey,
+  );
+  const onConfirm = (result) => {
+    if (result.timeout) {
+      notify({
+        message: 'Timed out',
+        type: 'error',
+        description: 'Timed out awaiting confirmation on transaction',
+      });
+    } else if (result.err) {
+      console.log(result.err);
+      notify({ message: 'Error creating account', type: 'error' });
+    } else {
+      notify({ message: 'Account creation confirmed', type: 'success' });
+    }
+    onConfirmCallBack && onConfirmCallBack(newAccountPubkey);
+  };
+  const onBeforeSend = () => notify({ message: 'Creating account...' });
+  const onAfterSend = () =>
+    notify({ message: 'Account created', type: 'success' });
+  return await sendTransaction({
+    transaction,
+    wallet,
+    connection,
+    onBeforeSend,
+    onAfterSend,
+    onConfirm,
+    signers,
+  });
+}
 
 export async function settleFunds({
   market,
   openOrders,
   connection,
   wallet,
-  baseCurrencyAccount,
-  quoteCurrencyAccount,
+  baseCurrencyPubkey,
+  quoteCurrencyPubkey,
 }) {
   if (
     !market ||
     !wallet ||
     !connection ||
     !openOrders ||
-    !baseCurrencyAccount ||
-    !quoteCurrencyAccount
+    !baseCurrencyPubkey ||
+    !quoteCurrencyPubkey
   ) {
-    if (
-      (baseCurrencyAccount && !quoteCurrencyAccount) ||
-      (quoteCurrencyAccount && !baseCurrencyAccount)
-    ) {
-      notify({
-        message: 'Add token account',
-        description: 'Add accounts for both currencies on sollet.io',
+    if (baseCurrencyPubkey && !quoteCurrencyPubkey) {
+      return await createTokenAccount({
+        connection,
+        wallet,
+        mintPublicKey: market.quoteMintAddress,
+        onConfirmCallBack: (newAccountPubkey) => {
+          newAccountPubkey &&
+            settleFunds({
+              market,
+              openOrders,
+              connection,
+              wallet,
+              baseCurrencyPubkey,
+              quoteCurrencyPubkey: newAccountPubkey,
+            });
+        },
+      });
+    } else if (quoteCurrencyPubkey && !baseCurrencyPubkey) {
+      return await createTokenAccount({
+        connection,
+        wallet,
+        mintPublicKey: market.baseMintAddress,
+        onConfirmCallBack: (newAccountPubkey) => {
+          newAccountPubkey &&
+            settleFunds({
+              market,
+              openOrders,
+              connection,
+              wallet,
+              baseCurrencyPubkey: newAccountPubkey,
+              quoteCurrencyPubkey,
+            });
+        },
       });
     } else {
       notify({ message: 'Not connected' });
+      return;
     }
-    return;
   }
-  const transaction = await market.makeSettleFundsTransaction(
+
+  const { transaction, signers } = await market.makeSettleFundsTransaction(
     connection,
     openOrders,
-    baseCurrencyAccount.pubkey,
-    quoteCurrencyAccount.pubkey,
+    baseCurrencyPubkey,
+    quoteCurrencyPubkey,
   );
+
   const onConfirm = (result) => {
-    if (result.err) {
+    if (result.timeout) {
+      notify({
+        message: 'Timed out',
+        type: 'error',
+        description: 'Timed out awaiting confirmation on transaction',
+      });
+    } else if (result.err) {
       console.log(result.err);
       notify({ message: 'Error settling funds', type: 'error' });
     } else {
@@ -51,6 +128,7 @@ export async function settleFunds({
     notify({ message: 'Funds settled', type: 'success' });
   return await sendTransaction({
     transaction,
+    signers,
     wallet,
     connection,
     onBeforeSend,
@@ -72,16 +150,21 @@ export async function cancelOrders({
   onAfterSendCallBack,
   onConfirmCallBack,
 }) {
-  const transaction = new Transaction();
-  transaction.add(market.makeMatchOrdersInstruction(5));
+  const transaction = market.makeMatchOrdersTransaction(5);
   orders.forEach((order) => {
     transaction.add(
       market.makeCancelOrderInstruction(connection, wallet.publicKey, order),
     );
   });
-  transaction.add(market.makeMatchOrdersInstruction(5));
+  transaction.add(market.makeMatchOrdersTransaction(5));
   const onConfirm = (result) => {
-    if (result.err) {
+    if (result.timeout) {
+      notify({
+        message: 'Timed out',
+        type: 'error',
+        description: 'Timed out awaiting confirmation on transaction',
+      });
+    } else if (result.err) {
       console.log(result.err);
       notify({
         message:
@@ -133,7 +216,6 @@ export async function placeOrder({
   wallet,
   baseCurrencyAccount,
   quoteCurrencyAccount,
-  openOrdersAccount,
   onBeforeSendCallBack,
   onAfterSendCallBack,
   onConfirmCallBack,
@@ -145,8 +227,8 @@ export async function placeOrder({
     market?.tickSize?.toFixed(getDecimalCount(market.tickSize)) ||
     market?.tickSize;
   const isIncrement = (num, step) =>
-    Math.abs((num / step) % 1) < 1e-10 ||
-    Math.abs(((num / step) % 1) - 1) < 1e-10;
+    Math.abs((num / step) % 1) < 1e-5 ||
+    Math.abs(((num / step) % 1) - 1) < 1e-5;
   if (isNaN(price)) {
     notify({ message: 'Invalid price', type: 'error' });
     return;
@@ -203,28 +285,24 @@ export async function placeOrder({
     size,
     orderType,
   };
-  let transaction, signers;
-  let extraSigners = [];
+  console.log(params);
 
-  // If the user does not has an open orders account, use serum-js to create one
-  if (!openOrdersAccount) {
-    let result = await market.makePlaceOrderTransaction(connection, params);
-    transaction = result.transaction;
-    signers = result.signers;
-    if (signers.length > 1) {
-      extraSigners = [signers[1]];
-    }
-  } else {
-    transaction = new Transaction();
-    transaction.add(market.makeMatchOrdersInstruction(5));
-    transaction.add(
-      market.makePlaceOrderInstruction(connection, params, openOrdersAccount),
-    );
-  }
+  const transaction = market.makeMatchOrdersTransaction(5);
+  let {
+    transaction: placeOrderTx,
+    signers,
+  } = await market.makePlaceOrderTransaction(connection, params);
+  transaction.add(placeOrderTx);
+  transaction.add(market.makeMatchOrdersTransaction(5));
 
-  transaction.add(market.makeMatchOrdersInstruction(5));
   const onConfirm = (result) => {
-    if (result.err) {
+    if (result.timeout) {
+      notify({
+        message: 'Timed out',
+        type: 'error',
+        description: 'Timed out awaiting confirmation on transaction',
+      });
+    } else if (result.err) {
       console.log(result.err);
       notify({ message: 'Error placing order', type: 'error' });
     } else {
@@ -248,95 +326,124 @@ export async function placeOrder({
     onBeforeSend,
     onAfterSend,
     onConfirm,
-    extraSigners,
+    signers,
   });
 }
+
+const getUnixTs = () => {
+  return new Date().getTime() / 1000;
+};
+
+const DEFAULT_TIMEOUT = 15000;
 
 async function sendTransaction({
   transaction,
   wallet,
+  signers = [wallet.publicKey],
   connection,
   onBeforeSend,
   onAfterSend,
   onConfirm,
-  extraSigners = [],
+  timeout = DEFAULT_TIMEOUT,
 }) {
   transaction.recentBlockhash = (
     await connection.getRecentBlockhash('max')
   ).blockhash;
-  const signed = await wallet.signTransaction(transaction);
-  const signedAt = new Date().getTime();
-
-  // Don't rely on the open orders account being the 2nd element in the list
-  // Sign with any accounts with a pubkey different from that of the wallet
-  extraSigners.forEach((extraSigner) => {
-    const extraSignature = nacl.sign.detached(
-      signed.serializeMessage(),
-      extraSigner.secretKey,
-    );
-    signed.addSignature(extraSigner.publicKey, extraSignature);
-  });
+  transaction.signPartial(...signers);
+  const rawTransaction = (
+    await wallet.signTransaction(transaction)
+  ).serialize();
+  let done = false;
+  const startTime = getUnixTs();
   onBeforeSend();
-
-  const txid = await connection.sendRawTransaction(signed.serialize(), {
+  const txid = await connection.sendRawTransaction(rawTransaction, {
     skipPreflight: true,
   });
-  console.log('Sent raw transaction, received TXID: ', txid);
-  const sentAt = new Date().getTime();
   onAfterSend();
-
-  // Send a bunch of requests, staggered, and stop sending the other ones, resolve when getting back the first
-  const result = await getSignatureStatus(connection, txid);
-  const confirmedAt = new Date().getTime();
-  console.log(
-    'Confirmed',
-    (confirmedAt - sentAt) / 1000,
-    (confirmedAt - signedAt) / 1000,
-  );
-  onConfirm(result);
+  console.log('Started sending transaction for', txid);
+  awaitTransactionSignatureConfirmation(txid, timeout, connection)
+    .then((res) => {
+      done = true;
+      onConfirm(res);
+    })
+    .catch((res) => {
+      done = true;
+      onConfirm(res);
+    });
+  while (!done && getUnixTs() - startTime < timeout) {
+    connection.sendRawTransaction(rawTransaction, {
+      skipPreflight: true,
+    });
+    await sleep(300);
+  }
+  console.log('Latency', txid, getUnixTs() - startTime);
   return txid;
 }
 
-async function getSignatureStatus(connection, txid) {
+async function awaitTransactionSignatureConfirmation(
+  txid,
+  timeout,
+  connection,
+) {
   let done = false;
   const result = await new Promise((resolve, reject) => {
     (async () => {
-      connection.onSignature(
-        txid,
-        (result, context) => {
-          if (!done) {
-            console.log('WS update for txid', txid, result);
-            resolve(result);
+      setTimeout(() => {
+        if (done) {
+          return;
+        }
+        done = true;
+        console.log('Timed out for txid', txid);
+        reject({ timeout: true });
+      }, timeout);
+      try {
+        connection.onSignature(
+          txid,
+          (result) => {
+            console.log('WS confirmed', txid, result);
             done = true;
-          }
-        },
-        'recent',
-      );
+            if (result.err) {
+              reject(result);
+            } else {
+              resolve(result);
+            }
+          },
+          'recent',
+        );
+        console.log('Set up WS connection', txid);
+      } catch (e) {
+        done = true;
+        console.log('WS error in setup', txid, e);
+      }
       while (!done) {
-        // eslint-disable-next-line
         (async () => {
           try {
-            console.log('Send REST request for txid', txid);
-            const results = await connection.getSignatureStatuses([txid]);
-            const result = results && results.value && results.value[0];
-            console.log('Received REST response for txid', txid, result);
-            if (!result || (!result?.confirmations && !result?.err)) {
-              return;
-            }
+            const signatureStatuses = await connection.getSignatureStatuses([
+              txid,
+            ]);
+            const result = signatureStatuses && signatureStatuses.value[0];
             if (!done) {
-              console.log('REST update for txid', txid, result);
-              done = true;
-              resolve(result);
+              if (!result) {
+                console.log('REST null result for', txid, result);
+              } else if (result.err) {
+                console.log('REST error for', txid, result);
+                done = true;
+                reject(result);
+              } else if (!result.confirmations) {
+                console.log('REST no confirmations for', txid, result);
+              } else {
+                console.log('REST confirmation for', txid, result);
+                done = true;
+                resolve(result);
+              }
             }
           } catch (e) {
             if (!done) {
-              console.log('REST error for txid', txid, e);
-              done = true;
-              reject(e);
+              console.log('REST connection error: txid', txid, e);
             }
           }
         })();
-        await sleep(500);
+        await sleep(300);
       }
     })();
   });

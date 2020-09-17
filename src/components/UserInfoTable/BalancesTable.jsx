@@ -15,7 +15,7 @@ export default function BalancesTable({ balances }) {
   const baseCurrencyAccount = useSelectedBaseCurrencyAccount();
   const quoteCurrencyAccount = useSelectedQuoteCurrencyAccount();
   const connection = useSendConnection();
-  const [, wallet] = useWallet();
+  const { wallet } = useWallet();
   const openOrdersAccount = useSelectedOpenOrdersAccount(true);
   const { market } = useMarket();
 
@@ -25,8 +25,8 @@ export default function BalancesTable({ balances }) {
       openOrders: openOrdersAccount,
       connection,
       wallet,
-      baseCurrencyAccount,
-      quoteCurrencyAccount,
+      baseCurrencyPubkey: baseCurrencyAccount?.pubkey,
+      quoteCurrencyPubkey: quoteCurrencyAccount?.pubkey,
     });
   }
 

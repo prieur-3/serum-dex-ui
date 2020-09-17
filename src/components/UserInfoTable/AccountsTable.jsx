@@ -7,7 +7,7 @@ import { settleFunds } from '../../utils/send';
 
 export default function AccountsTable({ accountBalances }) {
   const connection = useConnection();
-  const [, wallet] = useWallet();
+  const { wallet } = useWallet();
 
   async function onSettleFunds(account) {
     const {
@@ -21,8 +21,8 @@ export default function AccountsTable({ accountBalances }) {
       openOrders: openOrdersAccount,
       connection,
       wallet,
-      baseCurrencyAccount,
-      quoteCurrencyAccount,
+      baseCurrencyPubkey: baseCurrencyAccount?.pubkey,
+      quoteCurrencyPubkey: quoteCurrencyAccount?.pubkey,
     });
   }
 

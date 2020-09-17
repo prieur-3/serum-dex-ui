@@ -2,113 +2,47 @@ import {
   Market,
   Orderbook,
   decodeEventQueue,
-  DEX_PROGRAM_ID,
+  TokenInstructions,
+  MARKETS,
+  TOKEN_MINTS,
+  OpenOrders,
 } from '@project-serum/serum';
-import React, { useContext, useEffect, useState } from 'react';
 import { PublicKey } from '@solana/web3.js';
+import React, { useContext, useEffect, useState } from 'react';
 import { useLocalStorageState } from './utils';
 import { useAsyncData } from './fetch-loop';
-import { useAccountData, useConnection } from './connection';
+import { useAccountData, useAccountInfo, useConnection } from './connection';
 import { useWallet } from './wallet';
 import tuple from 'immutable-tuple';
 import { notify } from './notifications';
+import { BN } from 'bn.js';
 
-const DEFAULT_MARKET_NAME = 'SRM/USDC';
+// Used in debugging, should be false in production
+const _IGNORE_DEPRECATED = false;
 
-export const COIN_MINTS = {
-  '9n4nbM75f5Ui33ZbPYXn59EwSgE8CGsHtAeTH5YFeJ9E': 'BTC',
-  '2FPyTwcZLUg1MDrwsyoP4D6s1tM7hAkHYRjkNb5w6Pxk': 'ETH',
-  AGFEad2et2ZJif9jaGpdMixQqvW5i81aBdvKe7PHNfz3: 'FTT',
-  '3JSf5tPeuscJGtaCp5giEiDhv51gQ4v3zWg8DGgyLfAB': 'YFI',
-  CWE8jPTUYhdCTZYWPTe1o5DFqfdjzWKc9WKz6rSjQUdG: 'LINK',
-  Ga2AXHpfAF6mv2ekZwcsJFqu7wB4NV331qNH7fW9Nst8: 'XRP',
-  BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3iBBBDiq4: 'USDT',
-  BXXkv6z8ykpG1yuvUDPgh732wzVHB69RnB9YgSYh3itW: 'USDC',
-  MSRMcoVyrFxnSgo5uXwone5SKcGhT1KEJMFEkMEWf9L: 'MSRM',
-  SRMuApVNdxXokk5GT7XD5cUUgXMBCoAz2LHeuAoKWRt: 'SRM',
-};
-
-export const MARKET_INFO_BY_NAME = {
-  'MSRM/USDC': {
-    address: '7kgkDyW7dmyMeP8KFXzbcUZz1R2WHsovDZ7n3ihZuNDS',
-    name: 'MSRM/USDC',
-  },
-  'MSRM/USDT': {
-    address: 'H4snTKK9adiU15gP22ErfZYtro3aqR9BTMXiH3AwiUTQ',
-    name: 'MSRM/USDT',
-  },
-  'BTC/USDC': {
-    address: 'CAgAeMD7quTdnr6RPa7JySQpjf3irAmefYNdTb6anemq',
-    name: 'BTC/USDC',
-  },
-  'BTC/USDT': {
-    address: '8AcVjMG2LTbpkjNoyq8RwysokqZunkjy3d5JDzxC6BJa',
-    name: 'BTC/USDT',
-  },
-  'ETH/USDC': {
-    address: 'ASKiV944nKg1W9vsf7hf3fTsjawK6DwLwrnB2LH9n61c',
-    name: 'ETH/USDC',
-  },
-  'ETH/USDT': {
-    address: 'HfCZdJ1wfsWKfYP2qyWdXTT5PWAGWFctzFjLH48U1Hsd',
-    name: 'ETH/USDT',
-  },
-  'SRM/USDC': {
-    address: '68J6nkWToik6oM9rTatKSR5ibVSykAtzftBUEAvpRsys',
-    name: 'SRM/USDC',
-  },
-  'SRM/USDT': {
-    address: 'HARFLhSq8nECZk4DVFKvzqXMNMA9a3hjvridGMFizeLa',
-    name: 'SRM/USDT',
-  },
-  'FTT/USDC': {
-    address: 'FZqrBXz7ADGsmDf1TM9YgysPUfvtG8rJiNUrqDpHc9Au',
-    name: 'FTT/USDC',
-  },
-  'FTT/USDT': {
-    address: 'DHDdghmkBhEpReno3tbzBPtsxCt6P3KrMzZvxavTktJt',
-    name: 'FTT/USDT',
-  },
-  'YFI/USDC': {
-    address: 'FJg9FUtbN3fg3YFbMCFiZKjGh5Bn4gtzxZmtxFzmz9kT',
-    name: 'YFI/USDC',
-  },
-  'YFI/USDT': {
-    address: '5zu5bTZZvqESAAgFsr12CUMxdQvMrvU9CgvC1GW8vJdf',
-    name: 'YFI/USDT',
-  },
-  'LINK/USDC': {
-    address: '7GZ59DMgJ7D6dfoJTpszPayTRyua9jwcaGJXaRMMF1my',
-    name: 'LINK/USDC',
-  },
-  'LINK/USDT': {
-    address: 'F5xschQBMpu1gD2q1babYEAVJHR1buj1YazLiXyQNqSW',
-    name: 'LINK/USDT',
-  },
-};
+const USE_MARKETS = _IGNORE_DEPRECATED
+  ? MARKETS.map((m) => ({ ...m, deprecated: false }))
+  : MARKETS;
 
 export function useMarketsList() {
-  return Object.values(MARKET_INFO_BY_NAME);
+  return USE_MARKETS.filter(({ deprecated }) => !deprecated);
 }
 
 export function useAllMarkets() {
-  const selectedDexProgramID = DEX_PROGRAM_ID.toBase58();
-
   const connection = useConnection();
   const [markets, setMarkets] = useState([]);
 
   useEffect(() => {
     const getAllMarkets = async () => {
       const markets = [];
-      const marketList = Object.values(MARKET_INFO_BY_NAME);
       let marketInfo;
-      for (marketInfo of marketList) {
+      for (marketInfo of USE_MARKETS) {
         try {
           const market = await Market.load(
             connection,
-            new PublicKey(marketInfo.address),
+            marketInfo.address,
             {},
-            new PublicKey(selectedDexProgramID),
+            marketInfo.programId,
           );
           markets.push({ market, marketName: marketInfo.name });
         } catch (e) {
@@ -123,7 +57,74 @@ export function useAllMarkets() {
     };
 
     getAllMarkets();
-  }, [connection, selectedDexProgramID]);
+  }, [connection]);
+
+  return markets;
+}
+
+export function useUnmigratedDeprecatedMarketsList() {
+  const connection = useConnection();
+  const { wallet } = useWallet();
+
+  async function getUnmigratedDeprecatedMarkets() {
+    if (!wallet || !connection || !wallet.publicKey) {
+      return [];
+    }
+    let marketAddresses = [];
+    const deprecatedProgramIds = Array.from(
+      new Set(
+        USE_MARKETS.filter(({ deprecated }) => deprecated).map(
+          ({ programId }) => programId,
+        ),
+      ),
+    );
+    let programId;
+    for (programId of deprecatedProgramIds) {
+      try {
+        const openOrdersAccounts = await OpenOrders.findForOwner(
+          connection,
+          wallet.publicKey,
+          programId,
+        );
+        marketAddresses = marketAddresses.concat(
+          Array.from(
+            new Set(
+              openOrdersAccounts
+                .filter(
+                  (openOrders) =>
+                    openOrders.baseTokenTotal.toNumber() ||
+                    openOrders.quoteTokenTotal.toNumber(),
+                )
+                .map((openOrders) => openOrders.market),
+            ),
+          ).filter((address) =>
+            USE_MARKETS.some(
+              (market) => market.deprecated && market.address.equals(address),
+            ),
+          ),
+        );
+      } catch (e) {
+        console.log(
+          'Error loading deprecated markets',
+          programId?.toBase58(),
+          e.message,
+        );
+      }
+    }
+    return USE_MARKETS.filter((market) =>
+      marketAddresses.some((address) => address.equals(market.address)),
+    );
+  }
+
+  const [markets] = useAsyncData(
+    getUnmigratedDeprecatedMarkets,
+    tuple(
+      'useUnmigratedDeprecatedMarketsList',
+      connection,
+      wallet?.publicKey?.toBase58(),
+    ),
+    { refreshInterval: _SLOW_REFRESH_INTERVAL },
+  );
 
   return markets;
 }
@@ -136,17 +137,30 @@ const _SLOW_REFRESH_INTERVAL = 5 * 1000;
 // For things that change frequently
 const _FAST_REFRESH_INTERVAL = 1000;
 
-const _MEDIUM_REFRESH_INTERVAL = 3 * 1000;
+export const DEFAULT_MARKET = USE_MARKETS.find(
+  ({ name }) => name === 'SRM/USDT',
+);
 
 export function MarketProvider({ children }) {
-  const [marketName, setMarketName] = useLocalStorageState(
-    'selectedMarketName',
-    DEFAULT_MARKET_NAME,
+  const [marketAddress, setMarketAddress] = useLocalStorageState(
+    'marketAddress',
+    DEFAULT_MARKET.address.toBase58(),
   );
-  const selectedDexProgramID = DEX_PROGRAM_ID.toBase58();
 
   const connection = useConnection();
-  const marketInfo = MARKET_INFO_BY_NAME[marketName];
+  const marketInfo = USE_MARKETS.find((market) =>
+    market.address.equals(new PublicKey(marketAddress)),
+  );
+
+  // Replace existing market with a non-deprecated one on first load
+  useEffect(() => {
+    if (marketInfo && marketInfo.deprecated) {
+      console.log('Switching markets from deprecated', marketInfo);
+      setMarketAddress(DEFAULT_MARKET.address.toBase58());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [market, setMarket] = useState();
   useEffect(() => {
     setMarket(null);
@@ -158,12 +172,7 @@ export function MarketProvider({ children }) {
       });
       return;
     }
-    Market.load(
-      connection,
-      new PublicKey(marketInfo.address),
-      {},
-      new PublicKey(selectedDexProgramID),
-    )
+    Market.load(connection, marketInfo.address, {}, marketInfo.programId)
       .then(setMarket)
       .catch((e) =>
         notify({
@@ -172,22 +181,27 @@ export function MarketProvider({ children }) {
           type: 'error',
         }),
       );
-  }, [connection, marketName, marketInfo, selectedDexProgramID]);
+  }, [connection, marketInfo]);
 
   const baseCurrency =
-    COIN_MINTS[market?.baseMintAddress?.toBase58()] || 'UNKNOWN';
+    (market?.baseMintAddress &&
+      TOKEN_MINTS.find((token) => token.address.equals(market.baseMintAddress))
+        ?.name) ||
+    'UNKNOWN';
   const quoteCurrency =
-    COIN_MINTS[market?.quoteMintAddress?.toBase58()] || 'UNKNOWN';
+    (market?.quoteMintAddress &&
+      TOKEN_MINTS.find((token) => token.address.equals(market.quoteMintAddress))
+        ?.name) ||
+    'UNKNOWN';
   return (
     <MarketContext.Provider
       value={{
         market,
-        marketName,
-        setMarketName,
+        marketName: marketInfo?.name,
+        setMarketAddress,
         ...marketInfo,
         baseCurrency,
         quoteCurrency,
-        selectedDexProgramID,
       }}
     >
       {children}
@@ -279,7 +293,7 @@ export function useOrderbook(depth = 20) {
 // TODO: Update to use websocket
 export function useOpenOrdersAccounts(fast = false) {
   const { market } = useMarket();
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
   const connection = useConnection();
   async function getTokenAccounts() {
     if (!connected) {
@@ -319,7 +333,7 @@ export function useOpenOrdersAddresses() {
 // This is okay to poll
 export function useBaseCurrencyAccounts() {
   const { market } = useMarket();
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
   const connection = useConnection();
   async function getTokenAccounts() {
     if (!connected) {
@@ -331,6 +345,7 @@ export function useBaseCurrencyAccounts() {
     return await market.findBaseTokenAccountsForOwner(
       connection,
       wallet.publicKey,
+      true,
     );
   }
   return useAsyncData(
@@ -343,7 +358,7 @@ export function useBaseCurrencyAccounts() {
 // This is okay to poll
 export function useQuoteCurrencyAccounts() {
   const { market } = useMarket();
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
   const connection = useConnection();
   async function getTokenAccounts() {
     if (!connected) {
@@ -355,6 +370,7 @@ export function useQuoteCurrencyAccounts() {
     return await market.findQuoteTokenAccountsForOwner(
       connection,
       wallet.publicKey,
+      true,
     );
   }
   return useAsyncData(
@@ -382,49 +398,33 @@ export function useSelectedBaseCurrencyAccount() {
 
 // TODO: Update to use websocket
 export function useQuoteCurrencyBalances() {
-  const connection = useConnection();
   const quoteCurrencyAccount = useSelectedQuoteCurrencyAccount();
-  async function getBalance() {
-    if (!quoteCurrencyAccount) {
-      return null;
-    }
-    const balances = await connection.getTokenAccountBalance(
-      quoteCurrencyAccount.pubkey,
-    );
-    return balances && balances.value && balances.value.uiAmount;
+  const { market } = useMarket();
+  const [accountInfo, loaded] = useAccountInfo(quoteCurrencyAccount?.pubkey);
+  if (!market || !quoteCurrencyAccount || !loaded) {
+    return null;
   }
-  return useAsyncData(
-    getBalance,
-    tuple(
-      'useQuoteCurrencyBalances',
-      connection,
-      quoteCurrencyAccount && quoteCurrencyAccount.pubkey.toBase58(),
-    ),
-    { refreshInterval: _FAST_REFRESH_INTERVAL },
+  if (market.quoteMintAddress.equals(TokenInstructions.WRAPPED_SOL_MINT)) {
+    return accountInfo?.lamports / 1e9 ?? 0;
+  }
+  return market.quoteSplSizeToNumber(
+    new BN(accountInfo.data.slice(64, 72), 10, 'le'),
   );
 }
 
 // TODO: Update to use websocket
 export function useBaseCurrencyBalances() {
-  const connection = useConnection();
   const baseCurrencyAccount = useSelectedBaseCurrencyAccount();
-  async function getBalance() {
-    if (!baseCurrencyAccount) {
-      return null;
-    }
-    const balances = await connection.getTokenAccountBalance(
-      baseCurrencyAccount.pubkey,
-    );
-    return balances && balances.value && balances.value.uiAmount;
+  const { market } = useMarket();
+  const [accountInfo, loaded] = useAccountInfo(baseCurrencyAccount?.pubkey);
+  if (!market || !baseCurrencyAccount || !loaded) {
+    return null;
   }
-  return useAsyncData(
-    getBalance,
-    tuple(
-      'useBaseCurrencyBalances',
-      connection,
-      baseCurrencyAccount && baseCurrencyAccount.pubkey.toBase58(),
-    ),
-    { refreshInterval: _FAST_REFRESH_INTERVAL },
+  if (market.baseMintAddress.equals(TokenInstructions.WRAPPED_SOL_MINT)) {
+    return accountInfo?.lamports / 1e9 ?? 0;
+  }
+  return market.baseSplSizeToNumber(
+    new BN(accountInfo.data.slice(64, 72), 10, 'le'),
   );
 }
 
@@ -464,15 +464,18 @@ export function useFills(limit = 100) {
   if (!fills) {
     return null;
   }
-  const openOrdersAccount = openOrdersAccounts[0];
   return fills
-    .filter((fill) => fill.openOrders.equals(openOrdersAccount.publicKey))
+    .filter((fill) =>
+      openOrdersAccounts.some((openOrdersAccount) =>
+        fill.openOrders.equals(openOrdersAccount.publicKey),
+      ),
+    )
     .map((fill) => ({ ...fill, marketName }));
 }
 
 // TODO: Update to use websocket
 export function useFillsForAllMarkets(limit = 100) {
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
 
   const connection = useConnection();
   const allMarkets = useAllMarkets();
@@ -529,7 +532,7 @@ export function useFillsForAllMarkets(limit = 100) {
 
 // TODO: Update to use websocket
 export function useOpenOrdersForAllMarkets() {
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
 
   const connection = useConnection();
   const allMarkets = useAllMarkets();
@@ -585,8 +588,8 @@ export function useOpenOrdersForAllMarkets() {
 }
 
 export function useBalances() {
-  const [baseCurrencyBalances] = useBaseCurrencyBalances();
-  const [quoteCurrencyBalances] = useQuoteCurrencyBalances();
+  const baseCurrencyBalances = useBaseCurrencyBalances();
+  const quoteCurrencyBalances = useQuoteCurrencyBalances();
   const openOrdersAccount = useSelectedOpenOrdersAccount(true);
   const { baseCurrency, quoteCurrency, market } = useMarket();
   const baseExists =
@@ -639,7 +642,7 @@ export function useBalances() {
 }
 
 export function useWalletBalancesForAllMarkets() {
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
 
   const connection = useConnection();
   const allMarkets = useAllMarkets();
@@ -715,7 +718,7 @@ async function getCurrencyBalance(market, connection, wallet, base = true) {
 }
 
 export function useOpenOrderAccountBalancesForAllMarkets() {
-  const [connected, wallet] = useWallet();
+  const { connected, wallet } = useWallet();
 
   const connection = useConnection();
   const allMarkets = useAllMarkets();

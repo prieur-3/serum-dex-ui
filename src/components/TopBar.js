@@ -12,8 +12,9 @@ const Wrapper = styled.div`
   background-color: #0d1017;
   display: flex;
   flex-direction: row;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 0px 30px;
+  flex-wrap: wrap;
 `;
 const LogoWrapper = styled.div`
   display: flex;
@@ -29,16 +30,19 @@ const LogoWrapper = styled.div`
 
 export default function TopBar() {
   const [current, setCurrent] = useState('/');
-  const [connected, wallet, providerUrl, setProvider] = useWallet();
+  const { connected, wallet, providerUrl, setProvider } = useWallet();
   const { endpoint, setEndpoint } = useConnectionConfig();
   const location = useLocation();
   const history = useHistory();
 
   const publicKey = wallet?.publicKey?.toBase58();
 
-  const handleClick = useCallback((e) => {
-    history.push(e.key);
-  }, []);
+  const handleClick = useCallback(
+    (e) => {
+      history.push(e.key);
+    },
+    [history],
+  );
 
   useEffect(() => {
     if (location.pathname.includes('/orders')) {
@@ -50,12 +54,10 @@ export default function TopBar() {
 
   return (
     <Wrapper>
-      <div>
-        <LogoWrapper>
-          <img src={logo} alt="" />
-          {'SERUM'}
-        </LogoWrapper>
-      </div>
+      <LogoWrapper>
+        <img src={logo} alt="" />
+        {'SERUM'}
+      </LogoWrapper>
       <Menu
         mode="horizontal"
         onClick={handleClick}
@@ -70,7 +72,7 @@ export default function TopBar() {
       >
         <Menu.Item key="/">TRADE</Menu.Item>
       </Menu>
-      <div style={{ display: 'block' }}>
+      <div>
         <Select
           onSelect={setEndpoint}
           value={endpoint}
@@ -82,6 +84,8 @@ export default function TopBar() {
             </Select.Option>
           ))}
         </Select>
+      </div>
+      <div>
         <Select onSelect={setProvider} value={providerUrl}>
           {WALLET_PROVIDERS.map(({ name, url }) => (
             <Select.Option value={url} key={url}>
@@ -89,6 +93,8 @@ export default function TopBar() {
             </Select.Option>
           ))}
         </Select>
+      </div>
+      <div>
         <Button
           type="text"
           size="large"
