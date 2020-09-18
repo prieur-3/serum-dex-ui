@@ -1,11 +1,10 @@
 import BalancesTable from './BalancesTable';
 import OpenOrderTable from './OpenOrderTable';
 import React from 'react';
-import { Tabs, Typography, Col, Row } from 'antd';
+import { Tabs, Typography } from 'antd';
 import FillsTable from './FillsTable';
 import FloatingElement from '../layout/FloatingElement';
 import { useOpenOrders, useBalances } from '../../utils/markets';
-import { InfoCircleOutlined } from '@ant-design/icons';
 
 const { Paragraph } = Typography;
 const { TabPane } = Tabs;
